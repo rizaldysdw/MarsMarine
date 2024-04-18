@@ -5,9 +5,12 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundCue.h"
 #include "Engine/SkeletalMeshSocket.h"
+#include "Particles/ParticleSystemComponent.h"
 
 // Sets default values
-AWeapon::AWeapon()
+AWeapon::AWeapon() :
+	FireRate(0.1f),
+	Damage(12.0f)
 {
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
@@ -24,52 +27,9 @@ void AWeapon::BeginPlay()
 	
 }
 
-void AWeapon::PlayShotSound()
-{
-	if (ShotSound)
-	{
-		UGameplayStatics::PlaySound2D(this, ShotSound);
-	}
-}
-
-void AWeapon::PlayShotEndSound()
-{
-	if (ShotEndSound)
-	{
-		UGameplayStatics::PlaySound2D(this, ShotEndSound);
-	}
-}
-
-void AWeapon::PlayMuzzleFlashEffect()
-{
-	const USkeletalMeshSocket* BarrelSocket = WeaponSkeletalMesh->GetSocketByName("GunBarrel");
-
-	if (BarrelSocket)
-	{
-		const FTransform BarrelSocketTransform = BarrelSocket->GetSocketTransform(WeaponSkeletalMesh);
-
-		if (MuzzleFlash)
-		{
-			UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), MuzzleFlash, BarrelSocketTransform);
-		}
-	}
-}
-
 // Called every frame
 void AWeapon::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
 }
-
-void AWeapon::Fire()
-{
-	PlayShotSound();
-	PlayMuzzleFlashEffect();
-}
-
-void AWeapon::StopFiring()
-{
-	PlayShotEndSound();
-}
-

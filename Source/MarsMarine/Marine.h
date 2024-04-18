@@ -6,6 +6,16 @@
 #include "GameFramework/Character.h"
 #include "Marine.generated.h"
 
+UENUM(BlueprintType)
+enum class ECombatState : uint8
+{
+	ECS_Unoccupied UMETA(DisplayName = "Unoccupied"),
+	ECS_FireTimerInProgress UMETA(DisplayName = "FireTimerInProgress"),
+	ECS_Reloading UMETA(DisplayName = "Reloading"),
+
+	ECS_MAX UMETA(DisplayName = "DefaultMAX")
+};
+
 UCLASS()
 class MARSMARINE_API AMarine : public ACharacter
 {
@@ -65,7 +75,8 @@ protected:
 	// Perform line trace from crosshair 
 	bool CrosshairLineTrace(FHitResult& OutHitResult, FVector& OutHitLocation);
 
-	bool GetCrosshairLineTraceEndLocation(const FVector& MuzzleSocketLocation, FVector& OutBeamLocation);
+	// True if crosshair line trace hit something. Second line trace is performed here
+	bool GetCrosshairLineTraceEndLocation(const FVector& MuzzleSocketLocation, FHitResult& OutHitResult);
 
 	// Function to fire the weapon
 	void FireWeapon();
@@ -73,8 +84,17 @@ protected:
 	// Play Fire Anim Montage
 	void PlayFireMontage();
 
+	// Play Weapon Shot Sound
+	void PlayWeaponShotSound();
+
 	// Send bullet in direction of line trace
 	void SendBullet();
+
+	// Should be called in FireWeapon()
+	void StartFireTimer();
+
+	// Should be called only if weapon is automatic
+	void AutomaticFireReset();
 
 private:
 	// Camera Boom positioning behind character
@@ -140,13 +160,17 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	float CameraAimInterpSpeed;
 
+	// Default Weapon class. Set in Blueprint
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<AWeapon> DefaultWeapon;
+
 	// Currently equipped weapon
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	class AWeapon* EquippedWeapon;
 
-	// Default Weapon class. Set in Blueprint
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Combat, meta = (AllowPrivateAccess = "true"))
-	TSubclassOf<AWeapon> DefaultWeapon;
+	// Character can only fire or reload when unoccupied
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	ECombatState CombatState;
 
 	// True when Fire input is pressed
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
@@ -163,6 +187,8 @@ private:
 	// Montage containing animations for reloading weapon
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation", meta = (AllowPrivateAccess = "true"))
 	UAnimMontage* ReloadMontage;
+
+	FTimerHandle AutoFireTimer;
 
 public:	
 	// Called every frame

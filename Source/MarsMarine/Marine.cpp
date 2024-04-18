@@ -9,6 +9,9 @@
 #include "Weapon.h"
 #include "Engine/SkeletalMeshSocket.h"
 #include "Particles/ParticleSystemComponent.h"
+#include "Sound/SoundCue.h"
+#include "Enemy.h"
+#include "GreatSpider.h"
 
 // Sets default values
 AMarine::AMarine() :
@@ -29,6 +32,7 @@ AMarine::AMarine() :
 	CameraAimInterpSpeed(30.f),
 
 	// Combat
+	CombatState(ECombatState::ECS_Unoccupied),
 	bFirePressed(false),
 	bAimPressed(false)
 {
@@ -170,7 +174,6 @@ void AMarine::StartFiring()
 void AMarine::StopFiring()
 {
 	bFirePressed = false;
-	EquippedWeapon->StopFiring();
 }
 
 void AMarine::StartAiming()
@@ -250,7 +253,7 @@ bool AMarine::CrosshairLineTrace(FHitResult& OutHitResult, FVector& OutHitLocati
 	if (bScreenToWorld)
 	{
 		const FVector Start{ CrosshairWorldPosition };
-		const FVector End{ Start + CrosshairWorldDirection * 50'000.0f };
+		const FVector End{ Start + CrosshairWorldDirection * 500'000.0f };
 		OutHitLocation = End;
 
 		GetWorld()->LineTraceSingleByChannel(OutHitResult, Start, End, ECollisionChannel::ECC_Visibility);
@@ -265,10 +268,11 @@ bool AMarine::CrosshairLineTrace(FHitResult& OutHitResult, FVector& OutHitLocati
 	return false;
 }
 
-bool AMarine::GetCrosshairLineTraceEndLocation(const FVector& MuzzleSocketLocation, FVector& OutBeamLocation)
+bool AMarine::GetCrosshairLineTraceEndLocation(const FVector& MuzzleSocketLocation, FHitResult& OutHitResult)
 {
 	// Crosshair line trace hit
 	FHitResult CrosshairHitResult;
+	FVector OutBeamLocation;
 	bool bCrosshairHit = CrosshairLineTrace(CrosshairHitResult, OutBeamLocation);
 
 	if (bCrosshairHit)
@@ -282,30 +286,32 @@ bool AMarine::GetCrosshairLineTraceEndLocation(const FVector& MuzzleSocketLocati
 	}
 
 	// Perform a second line trace from gun barrel
-	FHitResult WeaponTraceHit;
 	const FVector WeaponLineTraceStart{ MuzzleSocketLocation };
 	const FVector WeaponLineTraceStartToEnd{ OutBeamLocation - WeaponLineTraceStart };
 	const FVector WeaponLineTraceEnd{ MuzzleSocketLocation + WeaponLineTraceStartToEnd * 1.25f };
 
-	GetWorld()->LineTraceSingleByChannel(WeaponTraceHit, WeaponLineTraceStart, WeaponLineTraceEnd, ECollisionChannel::ECC_Visibility);
+	GetWorld()->LineTraceSingleByChannel(OutHitResult, WeaponLineTraceStart, WeaponLineTraceEnd, ECollisionChannel::ECC_Visibility);
 
 	// Is there an object between weapon barrel and beam end point?
-	if (WeaponTraceHit.bBlockingHit)
+	if (!OutHitResult.bBlockingHit)
 	{
-		OutBeamLocation = WeaponTraceHit.Location;
+		OutHitResult.Location = OutBeamLocation;
 
-		return true;
+		return false;
 	}
 
-	return false;
+	return true;
 }
 
 void AMarine::FireWeapon()
 {
 	if (EquippedWeapon == nullptr) return;
+	if (CombatState != ECombatState::ECS_Unoccupied) return;
 
 	PlayFireMontage();
-	EquippedWeapon->Fire();
+	PlayWeaponShotSound();
+	SendBullet();
+	StartFireTimer();
 }
 
 void AMarine::PlayFireMontage()
@@ -329,6 +335,14 @@ void AMarine::PlayFireMontage()
 	}
 }
 
+void AMarine::PlayWeaponShotSound()
+{
+	if (EquippedWeapon->GetShotSound())
+	{
+		UGameplayStatics::PlaySound2D(this, EquippedWeapon->GetShotSound());
+	}
+}
+
 void AMarine::SendBullet()
 {
 	const USkeletalMeshSocket* BarrelSocket = EquippedWeapon->GetWeaponMesh()->GetSocketByName("GunBarrel");
@@ -336,20 +350,27 @@ void AMarine::SendBullet()
 	if (BarrelSocket)
 	{
 		const FTransform BarrelSocketTransform = BarrelSocket->GetSocketTransform(EquippedWeapon->GetWeaponMesh());
-		
-		/*if (EquippedWeapon->GetMuzzleFlash())
+
+		if (EquippedWeapon->GetMuzzleFlash())
 		{
 			UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), EquippedWeapon->GetMuzzleFlash(), BarrelSocketTransform);
-		}*/
+		}
 
-		FVector BeamEnd;
-		bool bBeamEnd = GetCrosshairLineTraceEndLocation(BarrelSocketTransform.GetLocation(), BeamEnd);
+		FHitResult BeamHitResult;
+		bool bBeamEnd = GetCrosshairLineTraceEndLocation(BarrelSocketTransform.GetLocation(), BeamHitResult);
 
 		if (bBeamEnd)
 		{
+			AEnemy* HitEnemy = Cast<AEnemy>(BeamHitResult.Actor.Get());
+
+			if (HitEnemy)
+			{
+				UGameplayStatics::ApplyDamage(HitEnemy, EquippedWeapon->GetWeaponDamage(), GetController(), this, UDamageType::StaticClass());
+			}
+
 			if (EquippedWeapon->GetBulletHitImpact())
 			{
-				UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), EquippedWeapon->GetBulletHitImpact(), BeamEnd);
+				UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), EquippedWeapon->GetBulletHitImpact(), BeamHitResult.Location);
 			}
 
 			if (EquippedWeapon->GetBulletSmokeTrail())
@@ -358,10 +379,27 @@ void AMarine::SendBullet()
 
 				if (Beam)
 				{
-					Beam->SetVectorParameter(FName("Target"), BeamEnd);
+					Beam->SetVectorParameter(FName("Target"), BeamHitResult.Location);
 				}
 			}
 		}
+	}
+}
+
+void AMarine::StartFireTimer()
+{
+	CombatState = ECombatState::ECS_FireTimerInProgress;
+
+	GetWorldTimerManager().SetTimer(AutoFireTimer, this, &AMarine::AutomaticFireReset, EquippedWeapon->GetWeaponFireRate());
+}
+
+void AMarine::AutomaticFireReset()
+{
+	CombatState = ECombatState::ECS_Unoccupied;
+
+	if (bFirePressed)
+	{
+		FireWeapon();
 	}
 }
 
